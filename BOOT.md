@@ -89,7 +89,7 @@ Resources/
 ## Feature Status
 
 ### v1.0 Target
-- [ ] Camera preview (AVCaptureSession → CALayer)
+- [x] Camera preview (AVCaptureSession → CALayer)
 - [ ] Motion detection with ROI masking
 - [ ] Motion-triggered recording with configurable tail
 - [ ] Draggable ROI rectangle (4 corner handles)
