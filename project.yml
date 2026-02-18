@@ -26,3 +26,5 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.snottledev.DenCam
         GENERATE_INFOPLIST_FILE: false         # We provide our own Info.plist
+        DEVELOPMENT_TEAM: VDVF7NG66P
+        CODE_SIGN_STYLE: Automatic
