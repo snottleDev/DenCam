@@ -1,4 +1,4 @@
-# DenCam — Claude Session Boot File
+# DenCam — BOOT.md
 
 Read this file at the start of every session to orient yourself before writing or modifying any code.
 
@@ -17,6 +17,7 @@ DenCam is a paid iOS app that films terrarium animals at night using motion-trig
 - All code must be heavily commented with inline explanations of *what* the code does and *why*.
 - Prefer clarity over cleverness. If there are two ways to do something, choose the one that is easier to read.
 - Never silently change architecture. If a structural decision needs to change, explain it first.
+- **One writer rule**: Only Claude Code (terminal) makes commits and pushes to GitHub. Claude Desktop (browser) is read-only on the repository — it can plan and discuss but must not create, edit, or commit files.
 
 ---
 
