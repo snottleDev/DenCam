@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Camera usage description shown in the system permission dialog -->
+	<key>NSCameraUsageDescription</key>
+	<string>DenCam needs camera access to show a live preview and record motion-triggered video of your terrarium.</string>
+
+	<!-- Microphone usage description — needed for recording video with audio -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>DenCam can record audio along with video. Microphone access is optional.</string>
+
+	<!-- Scene manifest tells UIKit to use our programmatic SceneDelegate (no storyboard) -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+
+	<!-- Empty launch screen — avoids needing a storyboard file -->
+	<key>UILaunchScreen</key>
+	<dict/>
+</dict>
+</plist>

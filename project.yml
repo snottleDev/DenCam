@@ -1,0 +1,28 @@
+name: DenCam
+
+options:
+  bundleIdPrefix: com.snottledev
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "16.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5"
+    TARGETED_DEVICE_FAMILY: "1"              # iPhone only
+    INFOPLIST_FILE: Resources/Info.plist
+
+targets:
+  DenCam:
+    type: application
+    platform: iOS
+    sources:
+      - path: DenCam
+    resources:
+      - path: Resources
+        excludes:
+          - Info.plist                         # Already set via INFOPLIST_FILE
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snottledev.DenCam
+        GENERATE_INFOPLIST_FILE: false         # We provide our own Info.plist
