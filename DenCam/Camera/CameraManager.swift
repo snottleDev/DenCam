@@ -8,13 +8,17 @@ import UIKit
 // to avoid blocking the main thread. The preview layer is safe to add to a
 // UIView on the main thread because CALayer operations are thread-safe for display.
 
-class CameraManager {
+class CameraManager: NSObject {
 
     // MARK: - Public Properties
 
     // The preview layer that ViewController adds to its view hierarchy.
     // It's created once and connected to the capture session.
     let previewLayer = AVCaptureVideoPreviewLayer()
+
+    // Callback for each video frame — ViewController sets this to feed
+    // pixel buffers to MotionDetector.
+    var onFrame: ((CVPixelBuffer) -> Void)?
 
     // MARK: - Private Properties
 
@@ -24,6 +28,9 @@ class CameraManager {
     // Serial queue dedicated to session configuration and start/stop.
     // AVCaptureSession is not thread-safe, so all mutations go through this queue.
     private let sessionQueue = DispatchQueue(label: "com.dencam.sessionQueue")
+
+    // Dedicated queue for video frame delivery to avoid blocking the session queue.
+    private let videoOutputQueue = DispatchQueue(label: "com.dencam.videoOutputQueue")
 
     // MARK: - Public Methods
 
@@ -82,7 +89,7 @@ class CameraManager {
 
     // MARK: - Private Methods
 
-    /// Configures the capture session with a back camera input.
+    /// Configures the capture session with a back camera input and video data output.
     /// Must be called on `sessionQueue`. Returns true on success.
     private func setupSession() -> Bool {
         captureSession.beginConfiguration()
@@ -117,6 +124,20 @@ class CameraManager {
             return false
         }
 
+        // Add video data output for frame-by-frame access (motion detection)
+        let videoOutput = AVCaptureVideoDataOutput()
+        videoOutput.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        ]
+        videoOutput.alwaysDiscardsLateVideoFrames = true
+        videoOutput.setSampleBufferDelegate(self, queue: videoOutputQueue)
+
+        if captureSession.canAddOutput(videoOutput) {
+            captureSession.addOutput(videoOutput)
+        } else {
+            print("[CameraManager] Could not add video data output to session")
+        }
+
         captureSession.commitConfiguration()
 
         // Wire the preview layer to the session so it displays camera frames.
@@ -128,5 +149,18 @@ class CameraManager {
         captureSession.startRunning()
 
         return true
+    }
+}
+
+// MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
+
+extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        onFrame?(pixelBuffer)
     }
 }

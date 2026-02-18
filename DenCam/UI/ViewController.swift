@@ -1,7 +1,8 @@
 import UIKit
 
 // ViewController is the main (and currently only) screen.
-// It hosts the camera preview full-screen and handles the permission flow.
+// It hosts the camera preview full-screen, the ROI overlay for motion detection,
+// and handles the permission flow.
 // It composes CameraManager rather than inheriting from it —
 // CameraManager handles AVFoundation, ViewController handles UIKit.
 
@@ -12,6 +13,13 @@ class ViewController: UIViewController {
     // CameraManager owns the capture session and preview layer.
     // ViewController just adds the preview layer to its view hierarchy.
     private let cameraManager = CameraManager()
+
+    // Motion detection pipeline
+    private let motionDetector = MotionDetector()
+    private let settingsStore = SettingsStore()
+
+    // ROI overlay drawn on top of the camera preview
+    private let roiOverlay = ROIOverlayView()
 
     // Label shown when camera permission is denied, so the user knows what to do.
     private let permissionLabel: UILabel = {
@@ -35,6 +43,40 @@ class ViewController: UIViewController {
         // Add the camera preview layer as a sublayer of the root view.
         // We insert it at index 0 so any future UI elements sit on top.
         view.layer.insertSublayer(cameraManager.previewLayer, at: 0)
+
+        // Add ROI overlay on top of preview
+        roiOverlay.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(roiOverlay)
+        NSLayoutConstraint.activate([
+            roiOverlay.topAnchor.constraint(equalTo: view.topAnchor),
+            roiOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            roiOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            roiOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        ])
+
+        // Load persisted settings
+        let savedROI = settingsStore.roiRect
+        roiOverlay.roiRect = savedROI
+        motionDetector.roiRect = savedROI
+        motionDetector.sensitivity = settingsStore.sensitivity
+
+        // Wire frame delivery: CameraManager → MotionDetector
+        cameraManager.onFrame = { [weak self] buffer in
+            self?.motionDetector.processFrame(buffer)
+        }
+
+        // Wire motion detection feedback: MotionDetector → ROI overlay
+        motionDetector.onMotionDetected = { [weak self] detected in
+            DispatchQueue.main.async {
+                self?.roiOverlay.isMotionDetected = detected
+            }
+        }
+
+        // Wire ROI changes: overlay → MotionDetector + SettingsStore
+        roiOverlay.onROIChanged = { [weak self] newRect in
+            self?.motionDetector.roiRect = newRect
+            self?.settingsStore.roiRect = newRect
+        }
 
         // Add the permission label centered in the view
         permissionLabel.translatesAutoresizingMaskIntoConstraints = false
