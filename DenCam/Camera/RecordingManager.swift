@@ -1,9 +1,15 @@
 import AVFoundation
+import CoreImage
+import UIKit
 
 // RecordingManager wraps AVAssetWriter to record video frames to a .mov file.
 // ViewController calls startRecording() / stopRecording() based on the motion
 // detection state machine. While recording, CameraManager feeds sample buffers
 // via appendSampleBuffer().
+//
+// When showBoundingBoxes is true, frames are composited through CIContext so
+// we can draw a yellow rectangle around the detected motion region before
+// encoding. When false, raw CMSampleBuffers are appended directly (zero overhead).
 //
 // All AVAssetWriter operations run on `recordingQueue` to avoid threading issues.
 
@@ -18,11 +24,31 @@ class RecordingManager {
     // Called on recordingQueue when recording fails.
     var onRecordingError: ((Error) -> Void)?
 
+    // When true, bounding boxes are burned into the recorded video.
+    // Set this before starting a recording — changing mid-recording has no effect
+    // on the writer setup but the drawing will toggle immediately.
+    var showBoundingBoxes: Bool = false
+
+    // The current motion bounding box in normalized coordinates (0–1).
+    // Updated by ViewController from the MotionDetector callback.
+    // Read on recordingQueue — written from videoOutputQueue via ViewController,
+    // so we use an atomic-friendly pattern (simple value type, no lock needed
+    // for single-writer/single-reader on 64-bit).
+    var currentMotionRect: CGRect?
+
     // MARK: - Private Properties
 
     private var assetWriter: AVAssetWriter?
     private var assetWriterInput: AVAssetWriterInput?
     private var currentFileURL: URL?
+
+    // Pixel buffer adaptor — used when showBoundingBoxes is true.
+    // Provides a CVPixelBufferPool for allocating output buffers efficiently.
+    private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+
+    // CIContext for converting YCbCr camera frames to BGRA for CoreGraphics drawing.
+    // Created once and reused — CIContext creation is expensive.
+    private lazy var ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
     // True after startRecording() succeeds, false after stopRecording() completes.
     private var isRecording = false
@@ -31,6 +57,10 @@ class RecordingManager {
     // We can't call startSession() in startRecording() because we don't have
     // a timestamp yet — it comes from the first sample buffer.
     private var isFirstFrame = true
+
+    // Whether this recording session uses the bounding box path.
+    // Captured at recording start so we don't change modes mid-recording.
+    private var recordingWithBoxes = false
 
     // Serial queue for all AVAssetWriter operations.
     // Never access assetWriter / assetWriterInput from another queue.
@@ -67,6 +97,9 @@ class RecordingManager {
     // MARK: - Private Methods
 
     private func beginRecording() {
+        // Capture the bounding box setting at recording start
+        recordingWithBoxes = showBoundingBoxes
+
         // Generate a unique filename in the temp directory
         let fileName = "DenCam_\(Self.timestampString()).mov"
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
@@ -77,9 +110,7 @@ class RecordingManager {
         do {
             let writer = try AVAssetWriter(outputURL: fileURL, fileType: .mov)
 
-            // Video settings — H.264, dimensions will be set from the first frame.
-            // We use 0x0 here as placeholders; the actual dimensions come from
-            // the format description of the first sample buffer.
+            // Video settings — H.264 at 1920x1080
             let videoSettings: [String: Any] = [
                 AVVideoCodecKey: AVVideoCodecType.h264,
                 AVVideoWidthKey: 1920,
@@ -101,6 +132,21 @@ class RecordingManager {
                 return
             }
 
+            // When burning bounding boxes, we need a pixel buffer adaptor to
+            // append CVPixelBuffers (after drawing) instead of raw CMSampleBuffers.
+            if recordingWithBoxes {
+                let adaptorAttrs: [String: Any] = [
+                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                    kCVPixelBufferWidthKey as String: 1920,
+                    kCVPixelBufferHeightKey as String: 1080
+                ]
+                let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+                    assetWriterInput: input,
+                    sourcePixelBufferAttributes: adaptorAttrs
+                )
+                self.pixelBufferAdaptor = adaptor
+            }
+
             // Start writing — the session start time is deferred to the first frame
             writer.startWriting()
 
@@ -110,7 +156,7 @@ class RecordingManager {
             self.isFirstFrame = true
             self.isRecording = true
 
-            print("[RecordingManager] Started writing to: \(fileURL.lastPathComponent)")
+            print("[RecordingManager] Started writing to: \(fileURL.lastPathComponent) (boxes: \(recordingWithBoxes))")
 
         } catch {
             print("[RecordingManager] Failed to create AVAssetWriter: \(error)")
@@ -126,10 +172,11 @@ class RecordingManager {
             return
         }
 
+        let timestamp = CMSampleBufferGetPresentationTimeStamp(buffer)
+
         // On the very first frame, start the writer session at this frame's timestamp.
         // This tells AVAssetWriter the time origin for the recording.
         if isFirstFrame {
-            let timestamp = CMSampleBufferGetPresentationTimeStamp(buffer)
             writer.startSession(atSourceTime: timestamp)
             isFirstFrame = false
         }
@@ -137,9 +184,83 @@ class RecordingManager {
         // Only append if the input is ready — otherwise drop the frame.
         // This is normal under heavy load; the camera produces frames faster
         // than the encoder can consume them.
-        if input.isReadyForMoreMediaData {
+        guard input.isReadyForMoreMediaData else { return }
+
+        if recordingWithBoxes {
+            // Bounding box path: render frame + box to a new pixel buffer
+            appendWithBoundingBox(buffer, at: timestamp)
+        } else {
+            // Fast path: append raw sample buffer directly
             input.append(buffer)
         }
+    }
+
+    /// Composites the bounding box onto the frame and appends via the pixel buffer adaptor.
+    private func appendWithBoundingBox(_ buffer: CMSampleBuffer, at timestamp: CMTime) {
+        guard let adaptor = pixelBufferAdaptor,
+              let sourcePixelBuffer = CMSampleBufferGetImageBuffer(buffer) else {
+            return
+        }
+
+        // Get an output pixel buffer from the adaptor's pool (efficient reuse)
+        guard let pool = adaptor.pixelBufferPool else {
+            print("[RecordingManager] Pixel buffer pool not available yet")
+            return
+        }
+
+        var outputBuffer: CVPixelBuffer?
+        let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outputBuffer)
+        guard status == kCVReturnSuccess, let output = outputBuffer else {
+            return
+        }
+
+        // Convert the camera's YCbCr frame to BGRA via CIImage + CIContext
+        let ciImage = CIImage(cvPixelBuffer: sourcePixelBuffer)
+        ciContext.render(ciImage, to: output)
+
+        // Draw the bounding box if one exists
+        if let motionRect = currentMotionRect {
+            drawBoundingBox(motionRect, on: output)
+        }
+
+        // Append the composited frame
+        adaptor.append(output, withPresentationTime: timestamp)
+    }
+
+    /// Draws a yellow rectangle on a BGRA pixel buffer using CoreGraphics.
+    private func drawBoundingBox(_ normalizedRect: CGRect, on pixelBuffer: CVPixelBuffer) {
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
+
+        // Create a CGContext that draws directly into the pixel buffer's memory
+        guard let context = CGContext(
+            data: baseAddress,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else { return }
+
+        // CoreGraphics has origin at bottom-left, but our normalized coords
+        // have origin at top-left. Flip the Y axis.
+        let boxRect = CGRect(
+            x: normalizedRect.origin.x * CGFloat(width),
+            y: (1.0 - normalizedRect.origin.y - normalizedRect.size.height) * CGFloat(height),
+            width: normalizedRect.size.width * CGFloat(width),
+            height: normalizedRect.size.height * CGFloat(height)
+        )
+
+        context.setStrokeColor(UIColor.systemYellow.cgColor)
+        context.setLineWidth(3)
+        context.stroke(boxRect)
     }
 
     private func finishRecording(completion: @escaping (URL?) -> Void) {
@@ -178,6 +299,7 @@ class RecordingManager {
             // Clean up references
             self?.assetWriter = nil
             self?.assetWriterInput = nil
+            self?.pixelBufferAdaptor = nil
             self?.currentFileURL = nil
         }
     }

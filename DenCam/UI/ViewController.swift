@@ -21,6 +21,9 @@ class ViewController: UIViewController {
     // ROI overlay drawn on top of the camera preview
     private let roiOverlay = ROIOverlayView()
 
+    // Bounding box overlay — draws a yellow rectangle around detected motion
+    private let boundingBoxOverlay = BoundingBoxOverlayView()
+
     // Screen brightness management — dims after inactivity
     private lazy var brightnessManager = BrightnessManager(dimDelay: settingsStore.dimDelay)
 
@@ -104,11 +107,22 @@ class ViewController: UIViewController {
             roiOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
 
+        // Add bounding box overlay on top of ROI overlay
+        boundingBoxOverlay.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(boundingBoxOverlay)
+        NSLayoutConstraint.activate([
+            boundingBoxOverlay.topAnchor.constraint(equalTo: view.topAnchor),
+            boundingBoxOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            boundingBoxOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            boundingBoxOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        ])
+
         // Load persisted settings
         let savedROI = settingsStore.roiRect
         roiOverlay.roiRect = savedROI
         motionDetector.roiRect = savedROI
         motionDetector.sensitivity = settingsStore.sensitivity
+        applyBoundingBoxSetting()
 
         // Wire frame delivery: CameraManager → MotionDetector
         cameraManager.onFrame = { [weak self] buffer in
@@ -129,6 +143,15 @@ class ViewController: UIViewController {
                 self.roiOverlay.isMotionDetected = detected
                 self.handleMotionDetection(detected)
             }
+        }
+
+        // Wire motion region: MotionDetector → bounding box overlay + RecordingManager
+        motionDetector.onMotionRegion = { [weak self] rect in
+            DispatchQueue.main.async {
+                self?.boundingBoxOverlay.motionRect = rect
+            }
+            // Update RecordingManager's motion rect for burn-in (no main queue needed)
+            self?.recordingManager.currentMotionRect = rect
         }
 
         // Wire ROI changes: overlay → MotionDetector + SettingsStore
@@ -235,10 +258,25 @@ class ViewController: UIViewController {
             guard let self = self else { return }
             self.motionDetector.sensitivity = self.settingsStore.sensitivity
             self.storageManager.quotaGB = self.settingsStore.storageQuotaGB
+            self.applyBoundingBoxSetting()
         }
 
         let nav = UINavigationController(rootViewController: settingsVC)
         present(nav, animated: true)
+    }
+
+    // MARK: - Bounding Box Setting
+
+    /// Reads the current toggle from SettingsStore and applies it to both
+    /// the on-screen overlay and the recording manager.
+    private func applyBoundingBoxSetting() {
+        let enabled = settingsStore.showBoundingBoxes
+        boundingBoxOverlay.isHidden = !enabled
+        recordingManager.showBoundingBoxes = enabled
+        if !enabled {
+            boundingBoxOverlay.motionRect = nil
+            recordingManager.currentMotionRect = nil
+        }
     }
 
     // MARK: - Touch Handling

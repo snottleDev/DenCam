@@ -27,6 +27,7 @@ class SettingsViewController: UITableViewController {
         case detection  // Sensitivity
         case recording  // Post-motion tail
         case storage    // Storage quota
+        case overlay    // Bounding boxes
         case display    // Dim delay
     }
 
@@ -95,6 +96,8 @@ class SettingsViewController: UITableViewController {
         return label
     }()
 
+    private let boundingBoxSwitch = UISwitch()
+
     // MARK: - Init
 
     init(settings: SettingsStore) {
@@ -125,6 +128,7 @@ class SettingsViewController: UITableViewController {
         tailStepper.value = settings.postMotionTail
         dimStepper.value = settings.dimDelay
         quotaStepper.value = settings.storageQuotaGB
+        boundingBoxSwitch.isOn = settings.showBoundingBoxes
 
         // Update the value labels to match
         updateSensitivityLabel()
@@ -137,6 +141,7 @@ class SettingsViewController: UITableViewController {
         tailStepper.addTarget(self, action: #selector(tailChanged), for: .valueChanged)
         dimStepper.addTarget(self, action: #selector(dimChanged), for: .valueChanged)
         quotaStepper.addTarget(self, action: #selector(quotaChanged), for: .valueChanged)
+        boundingBoxSwitch.addTarget(self, action: #selector(boundingBoxChanged), for: .valueChanged)
 
         // Register a plain cell style for reuse
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
@@ -168,6 +173,10 @@ class SettingsViewController: UITableViewController {
     @objc private func quotaChanged() {
         settings.storageQuotaGB = quotaStepper.value
         updateQuotaLabel()
+    }
+
+    @objc private func boundingBoxChanged() {
+        settings.showBoundingBoxes = boundingBoxSwitch.isOn
     }
 
     // MARK: - Label Updates
@@ -206,6 +215,7 @@ class SettingsViewController: UITableViewController {
         case .detection: return "Detection"
         case .recording: return "Recording"
         case .storage:   return "Storage"
+        case .overlay:   return "Overlay"
         case .display:   return "Display"
         }
     }
@@ -215,6 +225,7 @@ class SettingsViewController: UITableViewController {
         case .detection: return "How sensitive motion detection is. Higher values detect smaller movements."
         case .recording: return "Seconds to keep recording after motion stops, in case the animal moves again."
         case .storage:   return "Maximum video data per session. Set to Off for unlimited recording."
+        case .overlay:   return "Show a rectangle around detected motion on screen and in recordings."
         case .display:   return "Seconds of inactivity before the screen dims to save battery."
         }
     }
@@ -287,6 +298,11 @@ class SettingsViewController: UITableViewController {
                 stack.topAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.topAnchor),
                 stack.bottomAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.bottomAnchor)
             ])
+
+        case .overlay:
+            // Bounding box toggle row: label + switch
+            cell.textLabel?.text = "Bounding Boxes"
+            cell.accessoryView = boundingBoxSwitch
 
         case .display:
             // Dim delay row: label + value + stepper

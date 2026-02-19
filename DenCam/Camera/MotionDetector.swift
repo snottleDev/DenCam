@@ -13,6 +13,11 @@ class MotionDetector {
     var roiRect: CGRect = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
     var onMotionDetected: ((Bool) -> Void)?
 
+    // Called with the bounding box (normalized 0–1, relative to full frame) of
+    // all changed pixels, or nil when no motion is detected. Used for drawing
+    // bounding boxes on screen and burning them into recorded video.
+    var onMotionRegion: ((CGRect?) -> Void)?
+
     // MARK: - Private Properties
 
     // We store a COPY of the Y-plane luminance data rather than holding onto
@@ -65,6 +70,13 @@ class MotionDetector {
             if roiWidth > 0, roiHeight > 0 {
                 var changedPixels = 0
 
+                // Track the bounding box of all changed pixels so we can
+                // draw a rectangle around the motion region.
+                var bbMinX = Int.max
+                var bbMinY = Int.max
+                var bbMaxX = Int.min
+                var bbMaxY = Int.min
+
                 // Compare pixels in the ROI, sampling every 2nd pixel for performance
                 prevData.withUnsafeBytes { rawBuffer in
                     let previousPtr = rawBuffer.bindMemory(to: UInt8.self).baseAddress!
@@ -75,6 +87,10 @@ class MotionDetector {
                             let diff = abs(currentVal - previousVal)
                             if diff > pixelThreshold {
                                 changedPixels += 1
+                                if x < bbMinX { bbMinX = x }
+                                if x > bbMaxX { bbMaxX = x }
+                                if y < bbMinY { bbMinY = y }
+                                if y > bbMaxY { bbMaxY = y }
                             }
                         }
                     }
@@ -89,6 +105,20 @@ class MotionDetector {
                     let areaThreshold = 0.10 - (sensitivity * 0.098)
                     let motionDetected = changedFraction >= areaThreshold
                     onMotionDetected?(motionDetected)
+
+                    // Emit the bounding box as normalized coordinates (0–1)
+                    // relative to the full frame, so it's resolution-independent.
+                    if motionDetected && bbMinX <= bbMaxX && bbMinY <= bbMaxY {
+                        let normRect = CGRect(
+                            x: CGFloat(bbMinX) / CGFloat(width),
+                            y: CGFloat(bbMinY) / CGFloat(height),
+                            width: CGFloat(bbMaxX - bbMinX) / CGFloat(width),
+                            height: CGFloat(bbMaxY - bbMinY) / CGFloat(height)
+                        )
+                        onMotionRegion?(normRect)
+                    } else {
+                        onMotionRegion?(nil)
+                    }
                 }
             }
         }

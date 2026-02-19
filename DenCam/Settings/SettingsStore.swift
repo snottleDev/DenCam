@@ -15,6 +15,7 @@ class SettingsStore {
         static let postMotionTail = "post_motion_tail"
         static let dimDelay = "dim_delay"
         static let storageQuotaGB = "storage_quota_gb"
+        static let showBoundingBoxes = "show_bounding_boxes"
     }
 
     // MARK: - ROI (normalized 0.0–1.0)
@@ -96,6 +97,18 @@ class SettingsStore {
         }
         set {
             defaults.set(newValue, forKey: Key.storageQuotaGB)
+        }
+    }
+
+    // MARK: - Show Bounding Boxes (default false)
+    // Draw a rectangle around detected motion on screen and in recordings.
+
+    var showBoundingBoxes: Bool {
+        get {
+            return defaults.bool(forKey: Key.showBoundingBoxes)
+        }
+        set {
+            defaults.set(newValue, forKey: Key.showBoundingBoxes)
         }
     }
 }
