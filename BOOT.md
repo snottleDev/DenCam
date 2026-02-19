@@ -90,14 +90,14 @@ Resources/
 
 ### v1.0 Target
 - [x] Camera preview (AVCaptureSession → CALayer)
-- [ ] Motion detection with ROI masking
-- [ ] Motion-triggered recording with configurable tail
-- [ ] Draggable ROI rectangle (4 corner handles)
-- [ ] Screen auto-dim on phone stillness
-- [ ] Thermal state monitoring and shutdown
-- [ ] Storage quota enforcement
-- [ ] Save to Photos library
-- [ ] Settings screen (tail duration, quota, sensitivity)
+- [x] Motion detection with ROI masking
+- [x] Motion-triggered recording with configurable tail
+- [x] Draggable ROI rectangle (4 corner handles)
+- [x] Screen auto-dim on phone stillness
+- [x] Thermal state monitoring and shutdown
+- [x] Storage quota enforcement
+- [x] Save to Photos library
+- [x] Settings screen (tail duration, quota, sensitivity)
 
 ### Post-v1.0 Roadmap
 - [ ] Scheduled recording window
