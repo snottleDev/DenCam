@@ -14,6 +14,7 @@ class SettingsStore {
         static let sensitivity = "sensitivity"
         static let postMotionTail = "post_motion_tail"
         static let dimDelay = "dim_delay"
+        static let storageQuotaGB = "storage_quota_gb"
     }
 
     // MARK: - ROI (normalized 0.0–1.0)
@@ -80,6 +81,21 @@ class SettingsStore {
         }
         set {
             defaults.set(newValue, forKey: Key.dimDelay)
+        }
+    }
+
+    // MARK: - Storage Quota (GB, default 5.0)
+    // Maximum gigabytes of video per session. 0 means unlimited.
+
+    var storageQuotaGB: Double {
+        get {
+            guard defaults.object(forKey: Key.storageQuotaGB) != nil else {
+                return 5.0
+            }
+            return defaults.double(forKey: Key.storageQuotaGB)
+        }
+        set {
+            defaults.set(newValue, forKey: Key.storageQuotaGB)
         }
     }
 }

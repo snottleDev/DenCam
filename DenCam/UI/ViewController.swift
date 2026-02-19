@@ -24,6 +24,12 @@ class ViewController: UIViewController {
     // Screen brightness management — dims after inactivity
     private lazy var brightnessManager = BrightnessManager(dimDelay: settingsStore.dimDelay)
 
+    // Thermal state monitoring — warns at .serious, stops recording at .critical
+    private let thermalMonitor = ThermalMonitor()
+
+    // Storage quota enforcement — blocks new recordings when quota exceeded
+    private lazy var storageManager = StorageManager(quotaGB: settingsStore.storageQuotaGB)
+
     // Recording pipeline
     private let recordingManager = RecordingManager()
     private let photoLibrarySaver = PhotoLibrarySaver()
@@ -48,6 +54,21 @@ class ViewController: UIViewController {
         button.setImage(UIImage(systemName: "gearshape.fill", withConfiguration: config), for: .normal)
         button.tintColor = .white
         return button
+    }()
+
+    // True when thermal shutdown has halted recording — prevents new recordings
+    // until the device cools back to .serious or below.
+    private var thermalShutdown = false
+
+    // Label shown when the device is overheating
+    private let thermalWarningLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .systemRed
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        label.font = .boldSystemFont(ofSize: 16)
+        label.isHidden = true
+        return label
     }()
 
     // Label shown when camera permission is denied, so the user knows what to do.
@@ -118,11 +139,6 @@ class ViewController: UIViewController {
             self?.brightnessManager.userDidTouch()
         }
 
-        // Wire recording completion: RecordingManager → PhotoLibrarySaver
-        recordingManager.onRecordingComplete = { [weak self] tempURL in
-            self?.photoLibrarySaver.saveVideo(at: tempURL)
-        }
-
         // Log recording errors
         recordingManager.onRecordingError = { error in
             print("[ViewController] Recording error: \(error.localizedDescription)")
@@ -146,6 +162,29 @@ class ViewController: UIViewController {
             permissionLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32)
         ])
 
+        // Add thermal warning label above the permission label
+        thermalWarningLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(thermalWarningLabel)
+        NSLayoutConstraint.activate([
+            thermalWarningLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            thermalWarningLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20),
+            thermalWarningLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
+            thermalWarningLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32)
+        ])
+
+        // Wire thermal monitoring — warn at .serious, stop recording at .critical
+        thermalMonitor.onStateChange = { [weak self] state in
+            self?.handleThermalStateChange(state)
+        }
+
+        // Wire recording completion to storage tracking.
+        // trackFile() is called before Photos save so we count the bytes even
+        // if the save fails. This overwrites the existing onRecordingComplete.
+        recordingManager.onRecordingComplete = { [weak self] tempURL in
+            self?.storageManager.trackFile(at: tempURL)
+            self?.photoLibrarySaver.saveVideo(at: tempURL)
+        }
+
         // Add the settings gear button in the top-right corner
         settingsButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(settingsButton)
@@ -163,6 +202,7 @@ class ViewController: UIViewController {
             guard let self = self else { return }
             if success {
                 self.brightnessManager.start(in: self.view)
+                self.thermalMonitor.start()
             } else {
                 // Permission denied or session setup failed — show the guidance label
                 self.permissionLabel.isHidden = false
@@ -194,6 +234,7 @@ class ViewController: UIViewController {
         settingsVC.onDismiss = { [weak self] in
             guard let self = self else { return }
             self.motionDetector.sensitivity = self.settingsStore.sensitivity
+            self.storageManager.quotaGB = self.settingsStore.storageQuotaGB
         }
 
         let nav = UINavigationController(rootViewController: settingsVC)
@@ -211,6 +252,48 @@ class ViewController: UIViewController {
         super.touchesBegan(touches, with: event)
     }
 
+    // MARK: - Thermal State Handling
+
+    private func handleThermalStateChange(_ state: ProcessInfo.ThermalState) {
+        switch state {
+
+        case .critical:
+            // Device is dangerously hot — stop recording immediately and warn.
+            // Briefly restore screen brightness so the user can see the warning
+            // even if the screen was dimmed.
+            thermalShutdown = true
+            thermalWarningLabel.text = "Overheating — recording stopped.\nLet the device cool down."
+            thermalWarningLabel.isHidden = false
+            brightnessManager.userDidTouch()
+
+            if recordingState != .idle {
+                cancelTailTimer()
+                recordingState = .idle
+                recordingManager.stopRecording { url in
+                    if let url = url {
+                        print("[ViewController] Thermal shutdown — saved: \(url.lastPathComponent)")
+                    }
+                }
+                print("[ViewController] Thermal critical — stopped recording")
+            }
+
+        case .serious:
+            // Getting warm — show a warning but let recording continue.
+            // Also clear thermal shutdown if we were previously critical.
+            thermalShutdown = false
+            thermalWarningLabel.text = "Device is warm — monitoring temperature."
+            thermalWarningLabel.isHidden = false
+
+        case .nominal, .fair:
+            // All clear — hide any warning and allow recording again.
+            thermalShutdown = false
+            thermalWarningLabel.isHidden = true
+
+        @unknown default:
+            break
+        }
+    }
+
     // MARK: - Recording State Machine
     //
     // State transitions:
@@ -224,7 +307,15 @@ class ViewController: UIViewController {
         switch (recordingState, detected) {
 
         case (.idle, true):
-            // Motion detected while idle → start recording
+            // Motion detected while idle → start recording (if allowed)
+            if thermalShutdown {
+                print("[ViewController] Motion detected but thermal shutdown active — skipping")
+                return
+            }
+            if !storageManager.canStartRecording() {
+                print("[ViewController] Motion detected but storage quota exceeded — skipping")
+                return
+            }
             recordingState = .recording
             recordingManager.startRecording()
             print("[ViewController] Motion detected — started recording")

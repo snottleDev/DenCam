@@ -26,6 +26,7 @@ class SettingsViewController: UITableViewController {
     private enum Section: Int, CaseIterable {
         case detection  // Sensitivity
         case recording  // Post-motion tail
+        case storage    // Storage quota
         case display    // Dim delay
     }
 
@@ -80,6 +81,20 @@ class SettingsViewController: UITableViewController {
         return label
     }()
 
+    private let quotaStepper: UIStepper = {
+        let stepper = UIStepper()
+        stepper.minimumValue = 0   // 0 = unlimited
+        stepper.maximumValue = 20
+        stepper.stepValue = 1
+        return stepper
+    }()
+
+    private let quotaValueLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .secondaryLabel
+        return label
+    }()
+
     // MARK: - Init
 
     init(settings: SettingsStore) {
@@ -109,16 +124,19 @@ class SettingsViewController: UITableViewController {
         sensitivitySlider.value = settings.sensitivity
         tailStepper.value = settings.postMotionTail
         dimStepper.value = settings.dimDelay
+        quotaStepper.value = settings.storageQuotaGB
 
         // Update the value labels to match
         updateSensitivityLabel()
         updateTailLabel()
         updateDimLabel()
+        updateQuotaLabel()
 
         // Wire up control actions
         sensitivitySlider.addTarget(self, action: #selector(sensitivityChanged), for: .valueChanged)
         tailStepper.addTarget(self, action: #selector(tailChanged), for: .valueChanged)
         dimStepper.addTarget(self, action: #selector(dimChanged), for: .valueChanged)
+        quotaStepper.addTarget(self, action: #selector(quotaChanged), for: .valueChanged)
 
         // Register a plain cell style for reuse
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
@@ -147,6 +165,11 @@ class SettingsViewController: UITableViewController {
         updateDimLabel()
     }
 
+    @objc private func quotaChanged() {
+        settings.storageQuotaGB = quotaStepper.value
+        updateQuotaLabel()
+    }
+
     // MARK: - Label Updates
 
     private func updateSensitivityLabel() {
@@ -160,6 +183,11 @@ class SettingsViewController: UITableViewController {
 
     private func updateDimLabel() {
         dimValueLabel.text = "\(Int(dimStepper.value))s"
+    }
+
+    private func updateQuotaLabel() {
+        let value = Int(quotaStepper.value)
+        quotaValueLabel.text = value == 0 ? "Off" : "\(value) GB"
     }
 
     // MARK: - UITableViewDataSource
@@ -177,6 +205,7 @@ class SettingsViewController: UITableViewController {
         switch Section(rawValue: section)! {
         case .detection: return "Detection"
         case .recording: return "Recording"
+        case .storage:   return "Storage"
         case .display:   return "Display"
         }
     }
@@ -185,6 +214,7 @@ class SettingsViewController: UITableViewController {
         switch Section(rawValue: section)! {
         case .detection: return "How sensitive motion detection is. Higher values detect smaller movements."
         case .recording: return "Seconds to keep recording after motion stops, in case the animal moves again."
+        case .storage:   return "Maximum video data per session. Set to Off for unlimited recording."
         case .display:   return "Seconds of inactivity before the screen dims to save battery."
         }
     }
@@ -226,6 +256,26 @@ class SettingsViewController: UITableViewController {
             label.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
             let stack = UIStackView(arrangedSubviews: [label, tailValueLabel, tailStepper])
+            stack.axis = .horizontal
+            stack.spacing = 12
+            stack.alignment = .center
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            cell.contentView.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.leadingAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.leadingAnchor),
+                stack.trailingAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.trailingAnchor),
+                stack.topAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.topAnchor),
+                stack.bottomAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.bottomAnchor)
+            ])
+
+        case .storage:
+            // Storage quota row: label + value + stepper
+            cell.textLabel?.text = nil
+            let label = UILabel()
+            label.text = "Session Quota"
+            label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+            let stack = UIStackView(arrangedSubviews: [label, quotaValueLabel, quotaStepper])
             stack.axis = .horizontal
             stack.spacing = 12
             stack.alignment = .center
