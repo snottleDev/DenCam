@@ -60,7 +60,6 @@ class MotionDetector {
         let roiHeight = roiMaxY - roiMinY
         guard roiWidth > 0, roiHeight > 0 else { return }
 
-        let totalPixels = roiWidth * roiHeight
         var changedPixels = 0
 
         // Compare pixels in the ROI, sampling every 2nd pixel for performance

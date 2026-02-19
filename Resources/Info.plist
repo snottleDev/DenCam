@@ -49,6 +49,10 @@
 		</dict>
 	</dict>
 
+	<!-- App requires full screen — DenCam is a single-orientation camera app -->
+	<key>UIRequiresFullScreen</key>
+	<true/>
+
 	<!-- Empty launch screen — avoids needing a storyboard file -->
 	<key>UILaunchScreen</key>
 	<dict/>
