@@ -2,7 +2,7 @@ import UIKit
 
 // ViewController is the main (and currently only) screen.
 // It hosts the camera preview full-screen, the ROI overlay for motion detection,
-// and handles the permission flow.
+// and manages the recording state machine.
 // It composes CameraManager rather than inheriting from it —
 // CameraManager handles AVFoundation, ViewController handles UIKit.
 
@@ -20,6 +20,23 @@ class ViewController: UIViewController {
 
     // ROI overlay drawn on top of the camera preview
     private let roiOverlay = ROIOverlayView()
+
+    // Recording pipeline
+    private let recordingManager = RecordingManager()
+    private let photoLibrarySaver = PhotoLibrarySaver()
+
+    // Recording state machine — tracks whether we're idle, actively recording,
+    // or in the post-motion tail period waiting for more motion.
+    private enum RecordingState {
+        case idle              // No motion, not recording
+        case recording         // Motion detected, actively recording
+        case recordingWithTail // Motion stopped, recording continues for tail duration
+    }
+    private var recordingState: RecordingState = .idle
+
+    // Timer for the post-motion tail — fires after N seconds of no motion
+    // to stop recording and save the file.
+    private var tailTimer: Timer?
 
     // Label shown when camera permission is denied, so the user knows what to do.
     private let permissionLabel: UILabel = {
@@ -65,10 +82,19 @@ class ViewController: UIViewController {
             self?.motionDetector.processFrame(buffer)
         }
 
-        // Wire motion detection feedback: MotionDetector → ROI overlay
+        // Wire sample buffer delivery: CameraManager → RecordingManager
+        // Only forward frames when we're actually recording to avoid unnecessary work.
+        cameraManager.onSampleBuffer = { [weak self] buffer in
+            guard let self = self, self.recordingState != .idle else { return }
+            self.recordingManager.appendSampleBuffer(buffer)
+        }
+
+        // Wire motion detection: MotionDetector → ROI overlay + recording state machine
         motionDetector.onMotionDetected = { [weak self] detected in
             DispatchQueue.main.async {
-                self?.roiOverlay.isMotionDetected = detected
+                guard let self = self else { return }
+                self.roiOverlay.isMotionDetected = detected
+                self.handleMotionDetection(detected)
             }
         }
 
@@ -76,6 +102,24 @@ class ViewController: UIViewController {
         roiOverlay.onROIChanged = { [weak self] newRect in
             self?.motionDetector.roiRect = newRect
             self?.settingsStore.roiRect = newRect
+        }
+
+        // Wire recording completion: RecordingManager → PhotoLibrarySaver
+        recordingManager.onRecordingComplete = { [weak self] tempURL in
+            self?.photoLibrarySaver.saveVideo(at: tempURL)
+        }
+
+        // Log recording errors
+        recordingManager.onRecordingError = { error in
+            print("[ViewController] Recording error: \(error.localizedDescription)")
+        }
+
+        // Log photo library save results
+        photoLibrarySaver.onSaveComplete = { assetID in
+            print("[ViewController] Video saved to Photos: \(assetID)")
+        }
+        photoLibrarySaver.onSaveError = { error in
+            print("[ViewController] Failed to save video: \(error.localizedDescription)")
         }
 
         // Add the permission label centered in the view
@@ -111,5 +155,80 @@ class ViewController: UIViewController {
     // Hide the status bar for a fully immersive camera preview
     override var prefersStatusBarHidden: Bool {
         return true
+    }
+
+    // MARK: - Recording State Machine
+    //
+    // State transitions:
+    //   (idle, motion=true)            → start recording
+    //   (recording, motion=false)      → start tail timer
+    //   (recordingWithTail, motion=true) → cancel timer, back to recording
+    //   (tail timer fires)             → stop recording, save to Photos
+    //   all other combinations         → no-op
+
+    private func handleMotionDetection(_ detected: Bool) {
+        switch (recordingState, detected) {
+
+        case (.idle, true):
+            // Motion detected while idle → start recording
+            recordingState = .recording
+            recordingManager.startRecording()
+            print("[ViewController] Motion detected — started recording")
+
+        case (.recording, false):
+            // Motion stopped while recording → start the tail timer.
+            // If the animal moves again before the timer fires, we cancel it.
+            recordingState = .recordingWithTail
+            startTailTimer()
+            print("[ViewController] Motion stopped — tail timer started")
+
+        case (.recordingWithTail, true):
+            // Motion detected again during tail → cancel timer, keep recording.
+            // This prevents short pauses from splitting a single activity into
+            // multiple clips.
+            recordingState = .recording
+            cancelTailTimer()
+            print("[ViewController] Motion during tail — cancelled timer, continuing")
+
+        case (.recording, true),
+             (.idle, false),
+             (.recordingWithTail, false):
+            // No state change needed:
+            // - recording + motion: keep recording
+            // - idle + no motion: stay idle
+            // - tail + no motion: timer is still running
+            break
+        }
+    }
+
+    private func startTailTimer() {
+        cancelTailTimer()
+
+        let tailDuration = settingsStore.postMotionTail
+        tailTimer = Timer.scheduledTimer(
+            withTimeInterval: tailDuration,
+            repeats: false
+        ) { [weak self] _ in
+            self?.handleTailExpired()
+        }
+    }
+
+    private func cancelTailTimer() {
+        tailTimer?.invalidate()
+        tailTimer = nil
+    }
+
+    private func handleTailExpired() {
+        print("[ViewController] Tail expired — stopping recording")
+        recordingState = .idle
+        tailTimer = nil
+
+        recordingManager.stopRecording { url in
+            if let url = url {
+                print("[ViewController] Recording saved to: \(url.lastPathComponent)")
+            } else {
+                print("[ViewController] Recording stop returned no file")
+            }
+        }
     }
 }

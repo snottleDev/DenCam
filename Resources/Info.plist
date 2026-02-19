@@ -26,6 +26,10 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>DenCam can record audio along with video. Microphone access is optional.</string>
 
+	<!-- Photo library write permission — needed to save recorded videos -->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>DenCam saves motion-triggered videos to your Photos library so you can review them later.</string>
+
 	<!-- Scene manifest tells UIKit to use our programmatic SceneDelegate (no storyboard) -->
 	<key>UIApplicationSceneManifest</key>
 	<dict>

@@ -20,6 +20,10 @@ class CameraManager: NSObject {
     // pixel buffers to MotionDetector.
     var onFrame: ((CVPixelBuffer) -> Void)?
 
+    // Callback for full sample buffers — ViewController sets this to feed
+    // CMSampleBuffer (with timing info) to RecordingManager for AVAssetWriter.
+    var onSampleBuffer: ((CMSampleBuffer) -> Void)?
+
     // MARK: - Private Properties
 
     // The capture session that connects camera input to outputs.
@@ -160,7 +164,12 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        onFrame?(pixelBuffer)
+        // Feed pixel buffer to motion detector
+        if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            onFrame?(pixelBuffer)
+        }
+
+        // Feed full sample buffer (with timing) to recording manager
+        onSampleBuffer?(sampleBuffer)
     }
 }

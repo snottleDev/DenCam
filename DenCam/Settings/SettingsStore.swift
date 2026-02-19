@@ -12,6 +12,7 @@ class SettingsStore {
         static let roiWidth = "roi_width"
         static let roiHeight = "roi_height"
         static let sensitivity = "sensitivity"
+        static let postMotionTail = "post_motion_tail"
     }
 
     // MARK: - ROI (normalized 0.0–1.0)
@@ -48,6 +49,21 @@ class SettingsStore {
         }
         set {
             defaults.set(newValue, forKey: Key.sensitivity)
+        }
+    }
+
+    // MARK: - Post-Motion Tail (seconds, default 10.0)
+    // How long to keep recording after motion stops, in case the animal moves again.
+
+    var postMotionTail: TimeInterval {
+        get {
+            guard defaults.object(forKey: Key.postMotionTail) != nil else {
+                return 10.0
+            }
+            return defaults.double(forKey: Key.postMotionTail)
+        }
+        set {
+            defaults.set(newValue, forKey: Key.postMotionTail)
         }
     }
 }
