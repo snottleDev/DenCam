@@ -41,6 +41,15 @@ class ViewController: UIViewController {
     // to stop recording and save the file.
     private var tailTimer: Timer?
 
+    // Gear button in the top-right corner to open settings
+    private let settingsButton: UIButton = {
+        let button = UIButton(type: .system)
+        let config = UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)
+        button.setImage(UIImage(systemName: "gearshape.fill", withConfiguration: config), for: .normal)
+        button.tintColor = .white
+        return button
+    }()
+
     // Label shown when camera permission is denied, so the user knows what to do.
     private let permissionLabel: UILabel = {
         let label = UILabel()
@@ -137,6 +146,17 @@ class ViewController: UIViewController {
             permissionLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32)
         ])
 
+        // Add the settings gear button in the top-right corner
+        settingsButton.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(settingsButton)
+        NSLayoutConstraint.activate([
+            settingsButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            settingsButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            settingsButton.widthAnchor.constraint(equalToConstant: 44),
+            settingsButton.heightAnchor.constraint(equalToConstant: 44)
+        ])
+        settingsButton.addTarget(self, action: #selector(settingsTapped), for: .touchUpInside)
+
         // Ask CameraManager to request permission and set up the capture session.
         // The completion runs on the main thread.
         cameraManager.configure { [weak self] success in
@@ -163,6 +183,21 @@ class ViewController: UIViewController {
     // Hide the status bar for a fully immersive camera preview
     override var prefersStatusBarHidden: Bool {
         return true
+    }
+
+    // MARK: - Settings
+
+    @objc private func settingsTapped() {
+        let settingsVC = SettingsViewController(settings: settingsStore)
+
+        // When settings are dismissed, re-apply any values that may have changed
+        settingsVC.onDismiss = { [weak self] in
+            guard let self = self else { return }
+            self.motionDetector.sensitivity = self.settingsStore.sensitivity
+        }
+
+        let nav = UINavigationController(rootViewController: settingsVC)
+        present(nav, animated: true)
     }
 
     // MARK: - Touch Handling
