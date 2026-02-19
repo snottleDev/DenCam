@@ -103,7 +103,7 @@ Resources/
 - [ ] Scheduled recording window
 - [ ] Lock exposure / white balance
 - [ ] Morning summary local notification
-- [ ] Motion bounding box overlay (toggle)
+- [x] Motion bounding box overlay (toggle)
 - [ ] Sensitivity slider with live preview
 
 ---
