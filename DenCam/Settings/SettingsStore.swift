@@ -13,6 +13,7 @@ class SettingsStore {
         static let roiHeight = "roi_height"
         static let sensitivity = "sensitivity"
         static let postMotionTail = "post_motion_tail"
+        static let dimDelay = "dim_delay"
     }
 
     // MARK: - ROI (normalized 0.0–1.0)
@@ -64,6 +65,21 @@ class SettingsStore {
         }
         set {
             defaults.set(newValue, forKey: Key.postMotionTail)
+        }
+    }
+
+    // MARK: - Dim Delay (seconds, default 30.0)
+    // How long without screen touches before auto-dimming brightness.
+
+    var dimDelay: TimeInterval {
+        get {
+            guard defaults.object(forKey: Key.dimDelay) != nil else {
+                return 30.0
+            }
+            return defaults.double(forKey: Key.dimDelay)
+        }
+        set {
+            defaults.set(newValue, forKey: Key.dimDelay)
         }
     }
 }

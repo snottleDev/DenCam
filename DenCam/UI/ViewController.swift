@@ -21,6 +21,9 @@ class ViewController: UIViewController {
     // ROI overlay drawn on top of the camera preview
     private let roiOverlay = ROIOverlayView()
 
+    // Screen brightness management — dims after inactivity
+    private lazy var brightnessManager = BrightnessManager(dimDelay: settingsStore.dimDelay)
+
     // Recording pipeline
     private let recordingManager = RecordingManager()
     private let photoLibrarySaver = PhotoLibrarySaver()
@@ -99,9 +102,11 @@ class ViewController: UIViewController {
         }
 
         // Wire ROI changes: overlay → MotionDetector + SettingsStore
+        // Also reset the dim timer — dragging ROI corners counts as user activity.
         roiOverlay.onROIChanged = { [weak self] newRect in
             self?.motionDetector.roiRect = newRect
             self?.settingsStore.roiRect = newRect
+            self?.brightnessManager.userDidTouch()
         }
 
         // Wire recording completion: RecordingManager → PhotoLibrarySaver
@@ -135,7 +140,9 @@ class ViewController: UIViewController {
         // Ask CameraManager to request permission and set up the capture session.
         // The completion runs on the main thread.
         cameraManager.configure { [weak self] success in
-            if !success {
+            if success {
+                self?.brightnessManager.start()
+            } else {
                 // Permission denied or session setup failed — show the guidance label
                 self?.permissionLabel.isHidden = false
             }
@@ -155,6 +162,17 @@ class ViewController: UIViewController {
     // Hide the status bar for a fully immersive camera preview
     override var prefersStatusBarHidden: Bool {
         return true
+    }
+
+    // MARK: - Touch Handling
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        // If the screen was dimmed, this tap is just a "wake up" —
+        // don't pass it to the ROI overlay or other UI.
+        if brightnessManager.userDidTouch() {
+            return
+        }
+        super.touchesBegan(touches, with: event)
     }
 
     // MARK: - Recording State Machine
