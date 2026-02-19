@@ -73,7 +73,8 @@ class BrightnessManager {
 
         for i in 1...steps {
             DispatchQueue.main.asyncAfter(deadline: .now() + stepDuration * Double(i)) {
-                UIScreen.main.brightness = current + delta * CGFloat(i)
+                // Use exact target on final step to avoid floating-point drift
+                UIScreen.main.brightness = (i == steps) ? target : current + delta * CGFloat(i)
             }
         }
     }
