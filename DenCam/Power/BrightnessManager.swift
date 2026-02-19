@@ -9,6 +9,12 @@ class BrightnessManager {
     private var savedBrightness: CGFloat = 0.5
     private var dimDelay: TimeInterval
 
+    // Black overlay to fully hide the screen — UIScreen.main.brightness = 0
+    // still leaves a faint backlight glow, so we cover everything with an
+    // opaque view on top.
+    private var blackOverlay: UIView?
+    private weak var hostView: UIView?
+
     // MARK: - Init
 
     init(dimDelay: TimeInterval = 30) {
@@ -17,7 +23,8 @@ class BrightnessManager {
 
     // MARK: - Public
 
-    func start() {
+    func start(in view: UIView) {
+        hostView = view
         resetTimer()
     }
 
@@ -54,14 +61,39 @@ class BrightnessManager {
     }
 
     private func dimScreen() {
+        guard let hostView = hostView else { return }
+
         savedBrightness = UIScreen.main.brightness
         isDimmed = true
+
+        // Add opaque black overlay on top of all content
+        let overlay = UIView(frame: hostView.bounds)
+        overlay.backgroundColor = .black
+        overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        overlay.alpha = 0
+        overlay.isUserInteractionEnabled = false
+        hostView.addSubview(overlay)
+        blackOverlay = overlay
+
+        UIView.animate(withDuration: 0.5) {
+            overlay.alpha = 1
+        }
+
         animateBrightness(to: 0)
     }
 
     private func restoreScreen() {
         isDimmed = false
         animateBrightness(to: savedBrightness)
+
+        if let overlay = blackOverlay {
+            UIView.animate(withDuration: 0.3, animations: {
+                overlay.alpha = 0
+            }, completion: { _ in
+                overlay.removeFromSuperview()
+            })
+            blackOverlay = nil
+        }
     }
 
     /// UIScreen.main.brightness isn't animatable, so step it over ~0.5s.

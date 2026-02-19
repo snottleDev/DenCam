@@ -140,11 +140,12 @@ class ViewController: UIViewController {
         // Ask CameraManager to request permission and set up the capture session.
         // The completion runs on the main thread.
         cameraManager.configure { [weak self] success in
+            guard let self = self else { return }
             if success {
-                self?.brightnessManager.start()
+                self.brightnessManager.start(in: self.view)
             } else {
                 // Permission denied or session setup failed — show the guidance label
-                self?.permissionLabel.isHidden = false
+                self.permissionLabel.isHidden = false
             }
         }
     }
