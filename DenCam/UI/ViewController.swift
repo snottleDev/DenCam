@@ -59,6 +59,35 @@ class ViewController: UIViewController {
         return button
     }()
 
+    // Lock button in the top-left corner — toggles exposure & white balance lock.
+    // Starts disabled until the camera is configured (no device to lock yet).
+    // Icon: lock.open.fill = currently auto-adjusting, lock.fill = frozen.
+    private let lockButton: UIButton = {
+        let button = UIButton(type: .system)
+        let config = UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)
+        button.setImage(UIImage(systemName: "lock.open.fill", withConfiguration: config), for: .normal)
+        button.tintColor = .white
+        button.isEnabled = false   // enabled once camera is ready
+        return button
+    }()
+
+    // Tracks whether exposure and white balance are currently locked.
+    private var isCameraLocked = false
+
+    // Brief toast label that appears after locking/unlocking to confirm the action.
+    // It fades in, holds for 2 seconds, then fades out automatically.
+    private let lockToastLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 14, weight: .medium)
+        label.textAlignment = .center
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        label.layer.cornerRadius = 12
+        label.layer.masksToBounds = true
+        label.alpha = 0   // hidden until needed
+        return label
+    }()
+
     // True when thermal shutdown has halted recording — prevents new recordings
     // until the device cools back to .serious or below.
     private var thermalShutdown = false
@@ -219,6 +248,30 @@ class ViewController: UIViewController {
         ])
         settingsButton.addTarget(self, action: #selector(settingsTapped), for: .touchUpInside)
 
+        // Add the lock button in the top-left corner, mirroring the gear button.
+        lockButton.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(lockButton)
+        NSLayoutConstraint.activate([
+            lockButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            lockButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            lockButton.widthAnchor.constraint(equalToConstant: 44),
+            lockButton.heightAnchor.constraint(equalToConstant: 44)
+        ])
+        lockButton.addTarget(self, action: #selector(lockTapped), for: .touchUpInside)
+
+        // Add the toast label centered horizontally, near the top of the screen.
+        // Uses a fixed height and horizontal padding; text is set just before showing.
+        lockToastLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(lockToastLabel)
+        NSLayoutConstraint.activate([
+            lockToastLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            lockToastLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 68),
+            lockToastLabel.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -64),
+            lockToastLabel.heightAnchor.constraint(equalToConstant: 36)
+        ])
+        // Inset the text so it doesn't press against the rounded edges
+        lockToastLabel.layoutMargins = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+
         // Ask CameraManager to request permission and set up the capture session.
         // The completion runs on the main thread.
         cameraManager.configure { [weak self] success in
@@ -226,6 +279,8 @@ class ViewController: UIViewController {
             if success {
                 self.brightnessManager.start(in: self.view)
                 self.thermalMonitor.start()
+                // Camera is ready — the lock button can now do something useful.
+                self.lockButton.isEnabled = true
             } else {
                 // Permission denied or session setup failed — show the guidance label
                 self.permissionLabel.isHidden = false
@@ -263,6 +318,61 @@ class ViewController: UIViewController {
 
         let nav = UINavigationController(rootViewController: settingsVC)
         present(nav, animated: true)
+    }
+
+    // MARK: - Exposure & White Balance Lock
+
+    @objc private func lockTapped() {
+        if isCameraLocked {
+            // Currently locked — restore auto-adjustment
+            cameraManager.unlockExposureAndWhiteBalance { [weak self] success in
+                guard let self = self else { return }
+                if success {
+                    self.isCameraLocked = false
+                    // Switch icon back to the open lock
+                    let config = UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)
+                    self.lockButton.setImage(
+                        UIImage(systemName: "lock.open.fill", withConfiguration: config), for: .normal)
+                    self.lockButton.tintColor = .white
+                    self.showLockToast("Auto exposure restored")
+                }
+            }
+        } else {
+            // Currently auto — lock at current values.
+            // The camera should already be settled on the scene before the user taps this.
+            cameraManager.lockExposureAndWhiteBalance { [weak self] success in
+                guard let self = self else { return }
+                if success {
+                    self.isCameraLocked = true
+                    // Switch to the closed lock icon and tint yellow so it's clearly active
+                    let config = UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)
+                    self.lockButton.setImage(
+                        UIImage(systemName: "lock.fill", withConfiguration: config), for: .normal)
+                    self.lockButton.tintColor = .systemYellow
+                    self.showLockToast("Exposure & white balance locked")
+                }
+            }
+        }
+    }
+
+    /// Briefly shows a confirmation message near the top of the screen, then fades it out.
+    /// Any in-flight toast is cancelled and replaced by the new message.
+    private func showLockToast(_ message: String) {
+        // Cancel any existing fade-out animation on the toast
+        lockToastLabel.layer.removeAllAnimations()
+
+        // Set the text and pad it with spaces since UILabel doesn't honour layoutMargins for bg
+        lockToastLabel.text = "  \(message)  "
+        lockToastLabel.alpha = 0
+
+        UIView.animate(withDuration: 0.2) {
+            self.lockToastLabel.alpha = 1.0
+        } completion: { _ in
+            // Hold visible for 2 seconds, then fade out
+            UIView.animate(withDuration: 0.5, delay: 2.0) {
+                self.lockToastLabel.alpha = 0
+            }
+        }
     }
 
     // MARK: - Bounding Box Setting

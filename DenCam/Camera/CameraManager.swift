@@ -36,6 +36,9 @@ class CameraManager: NSObject {
     // Dedicated queue for video frame delivery to avoid blocking the session queue.
     private let videoOutputQueue = DispatchQueue(label: "com.dencam.videoOutputQueue")
 
+    // The active camera device — stored after setup so we can lock/unlock it later.
+    private var captureDevice: AVCaptureDevice?
+
     // MARK: - Public Methods
 
     /// Requests camera permission and configures the capture session.
@@ -91,6 +94,76 @@ class CameraManager: NSObject {
         }
     }
 
+    /// Locks exposure and white balance at their current automatically-determined values.
+    ///
+    /// Call this after auto-exposure has settled on the scene you want (e.g. the lit
+    /// terrarium at night). Both will stay fixed until `unlockExposureAndWhiteBalance()`
+    /// is called, preventing the camera from hunting or drifting during a long session.
+    ///
+    /// The completion handler is called on the main thread with `true` on success,
+    /// `false` if the device isn't ready or locking isn't supported.
+    func lockExposureAndWhiteBalance(completion: @escaping (Bool) -> Void) {
+        sessionQueue.async { [weak self] in
+            guard let device = self?.captureDevice else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            do {
+                // lockForConfiguration() is required before changing any device property.
+                // It prevents other parts of the system from changing settings mid-write.
+                try device.lockForConfiguration()
+
+                // .locked means "hold the current automatically-set value, stop adjusting".
+                // We check support first — some older devices may not support a given mode.
+                if device.isExposureModeSupported(.locked) {
+                    device.exposureMode = .locked
+                }
+                if device.isWhiteBalanceModeSupported(.locked) {
+                    device.whiteBalanceMode = .locked
+                }
+
+                device.unlockForConfiguration()
+                DispatchQueue.main.async { completion(true) }
+            } catch {
+                print("[CameraManager] Could not lock camera configuration: \(error)")
+                DispatchQueue.main.async { completion(false) }
+            }
+        }
+    }
+
+    /// Restores continuous auto-exposure and auto-white-balance.
+    ///
+    /// The camera will begin adjusting again immediately. Call this if the lighting
+    /// conditions change significantly and you want to re-lock at the new values.
+    ///
+    /// The completion handler is called on the main thread with `true` on success.
+    func unlockExposureAndWhiteBalance(completion: @escaping (Bool) -> Void) {
+        sessionQueue.async { [weak self] in
+            guard let device = self?.captureDevice else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            do {
+                try device.lockForConfiguration()
+
+                // .continuousAutoExposure / .continuousAutoWhiteBalance — the camera
+                // monitors the scene and adjusts automatically, as it does by default.
+                if device.isExposureModeSupported(.continuousAutoExposure) {
+                    device.exposureMode = .continuousAutoExposure
+                }
+                if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                    device.whiteBalanceMode = .continuousAutoWhiteBalance
+                }
+
+                device.unlockForConfiguration()
+                DispatchQueue.main.async { completion(true) }
+            } catch {
+                print("[CameraManager] Could not unlock camera configuration: \(error)")
+                DispatchQueue.main.async { completion(false) }
+            }
+        }
+    }
+
     // MARK: - Private Methods
 
     /// Configures the capture session with a back camera input and video data output.
@@ -111,6 +184,9 @@ class CameraManager: NSObject {
             captureSession.commitConfiguration()
             return false
         }
+
+        // Store the device so lockExposureAndWhiteBalance() can reference it later.
+        captureDevice = camera
 
         // Create an input from the camera device and add it to the session
         do {
