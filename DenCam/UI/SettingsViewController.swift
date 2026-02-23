@@ -18,6 +18,11 @@ class SettingsViewController: UITableViewController {
     // re-read any values that changed.
     var onDismiss: (() -> Void)?
 
+    // Called when the user taps "Live Preview" in the sensitivity section.
+    // SettingsViewController dismisses itself first, then fires this so
+    // ViewController can present the sensitivity preview over the camera feed.
+    var onOpenSensitivityPreview: (() -> Void)?
+
     // MARK: - Section / Row Layout
     //
     // Each section groups related settings. Rows are identified by their
@@ -155,6 +160,21 @@ class SettingsViewController: UITableViewController {
         }
     }
 
+    // MARK: - UITableViewDelegate
+
+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+
+        // Only the Live Preview row (detection section, row 1) is tappable.
+        guard Section(rawValue: indexPath.section) == .detection, indexPath.row == 1 else { return }
+
+        // Dismiss the settings sheet, then tell ViewController to open the preview.
+        // We dismiss first so the camera feed is unobscured when the preview appears.
+        dismiss(animated: true) { [weak self] in
+            self?.onOpenSensitivityPreview?()
+        }
+    }
+
     @objc private func sensitivityChanged() {
         settings.sensitivity = sensitivitySlider.value
         updateSensitivityLabel()
@@ -206,8 +226,9 @@ class SettingsViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        // Each section has exactly one row
-        return 1
+        // Detection has two rows: the slider and a "Live Preview" entry point.
+        // All other sections have exactly one row.
+        return Section(rawValue: section) == .detection ? 2 : 1
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -222,7 +243,7 @@ class SettingsViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
         switch Section(rawValue: section)! {
-        case .detection: return "How sensitive motion detection is. Higher values detect smaller movements."
+        case .detection: return "Higher values detect smaller movements. Use Live Preview to tune against your actual terrarium."
         case .recording: return "Seconds to keep recording after motion stops, in case the animal moves again."
         case .storage:   return "Maximum video data per session. Set to Off for unlimited recording."
         case .overlay:   return "Show a rectangle around detected motion on screen and in recordings."
@@ -240,24 +261,34 @@ class SettingsViewController: UITableViewController {
         switch Section(rawValue: indexPath.section)! {
 
         case .detection:
-            // Sensitivity row: label + slider + percentage value
-            cell.textLabel?.text = nil
-            let label = UILabel()
-            label.text = "Sensitivity"
-            label.setContentHuggingPriority(.required, for: .horizontal)
+            if indexPath.row == 0 {
+                // Row 0: sensitivity slider
+                cell.textLabel?.text = nil
+                let label = UILabel()
+                label.text = "Sensitivity"
+                label.setContentHuggingPriority(.required, for: .horizontal)
 
-            let stack = UIStackView(arrangedSubviews: [label, sensitivitySlider, sensitivityValueLabel])
-            stack.axis = .horizontal
-            stack.spacing = 12
-            stack.alignment = .center
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            cell.contentView.addSubview(stack)
-            NSLayoutConstraint.activate([
-                stack.leadingAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.leadingAnchor),
-                stack.trailingAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.trailingAnchor),
-                stack.topAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.topAnchor),
-                stack.bottomAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.bottomAnchor)
-            ])
+                let stack = UIStackView(arrangedSubviews: [label, sensitivitySlider, sensitivityValueLabel])
+                stack.axis = .horizontal
+                stack.spacing = 12
+                stack.alignment = .center
+                stack.translatesAutoresizingMaskIntoConstraints = false
+                cell.contentView.addSubview(stack)
+                NSLayoutConstraint.activate([
+                    stack.leadingAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.leadingAnchor),
+                    stack.trailingAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.trailingAnchor),
+                    stack.topAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.topAnchor),
+                    stack.bottomAnchor.constraint(equalTo: cell.contentView.layoutMarginsGuide.bottomAnchor)
+                ])
+            } else {
+                // Row 1: live preview entry point — tappable, opens preview over camera feed
+                cell.selectionStyle = .default
+                cell.textLabel?.text = "Live Preview"
+                let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+                cell.imageView?.image = UIImage(systemName: "camera.viewfinder", withConfiguration: config)
+                cell.imageView?.tintColor = .label
+                cell.accessoryType = .disclosureIndicator
+            }
 
         case .recording:
             // Post-motion tail row: label + value + stepper

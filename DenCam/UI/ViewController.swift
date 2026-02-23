@@ -74,6 +74,10 @@ class ViewController: UIViewController {
     // Tracks whether exposure and white balance are currently locked.
     private var isCameraLocked = false
 
+    // Held while the sensitivity preview sheet is open so the motion callback
+    // can update the preview's indicator in real time.
+    private weak var sensitivityPreviewVC: SensitivityPreviewViewController?
+
     // Brief toast label that appears after locking/unlocking to confirm the action.
     // It fades in, holds for 2 seconds, then fades out automatically.
     private let lockToastLabel: UILabel = {
@@ -181,10 +185,12 @@ class ViewController: UIViewController {
         }
 
         // Wire motion detection: MotionDetector → ROI overlay + recording state machine
+        // Also feeds the sensitivity preview indicator if it's currently on screen.
         motionDetector.onMotionDetected = { [weak self] detected in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.roiOverlay.isMotionDetected = detected
+                self.sensitivityPreviewVC?.setMotionActive(detected)
                 self.handleMotionDetection(detected)
             }
         }
@@ -326,7 +332,7 @@ class ViewController: UIViewController {
     @objc private func settingsTapped() {
         let settingsVC = SettingsViewController(settings: settingsStore)
 
-        // When settings are dismissed, re-apply any values that may have changed
+        // When settings are dismissed via Done, re-apply any values that may have changed.
         settingsVC.onDismiss = { [weak self] in
             guard let self = self else { return }
             self.motionDetector.sensitivity = self.settingsStore.sensitivity
@@ -334,7 +340,51 @@ class ViewController: UIViewController {
             self.applyBoundingBoxSetting()
         }
 
+        // When the user taps Live Preview, settings dismisses itself and we open
+        // the sensitivity preview sheet over the camera feed.
+        settingsVC.onOpenSensitivityPreview = { [weak self] in
+            self?.presentSensitivityPreview()
+        }
+
         let nav = UINavigationController(rootViewController: settingsVC)
+        present(nav, animated: true)
+    }
+
+    // MARK: - Sensitivity Live Preview
+
+    private func presentSensitivityPreview() {
+        let previewVC = SensitivityPreviewViewController(sensitivity: settingsStore.sensitivity)
+        sensitivityPreviewVC = previewVC
+
+        // Force bounding boxes visible during preview so the user can see exactly
+        // where motion is being detected, regardless of their Overlay setting.
+        boundingBoxOverlay.isHidden = false
+
+        // Apply sensitivity to MotionDetector in real time on every slider tick.
+        previewVC.onSensitivityChanged = { [weak self] value in
+            guard let self = self else { return }
+            self.motionDetector.sensitivity = value
+            self.settingsStore.sensitivity = value
+        }
+
+        // Done: clear the preview reference and restore the bounding box setting.
+        previewVC.onDone = { [weak self] value in
+            guard let self = self else { return }
+            self.motionDetector.sensitivity = value
+            self.settingsStore.sensitivity = value
+            self.sensitivityPreviewVC = nil
+            self.applyBoundingBoxSetting()   // restore isHidden to user's preference
+            self.dismiss(animated: true)
+        }
+
+        // Present as a half-height sheet so the camera feed is visible above.
+        // The ROI border and bounding box overlay remain interactive and visible.
+        let nav = UINavigationController(rootViewController: previewVC)
+        if let sheet = nav.sheetPresentationController {
+            sheet.detents = [.medium()]
+            sheet.prefersGrabberVisible = true  // drag handle at the top of the sheet
+            sheet.prefersScrollingExpandsWhenScrolledToEdge = false
+        }
         present(nav, animated: true)
     }
 
