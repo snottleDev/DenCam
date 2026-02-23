@@ -56,6 +56,7 @@ DenCam/
     ROIOverlayView.swift    # Draggable corner handles for Region of Interest rectangle
     BoundingBoxOverlayView.swift  # Toggleable overlay drawing boxes around detected motion
     SettingsViewController.swift  # User settings: tail duration, quota, schedule, sensitivity
+    SensitivityPreviewViewController.swift  # Half-sheet live preview for sensitivity tuning
 
   Settings/
     SettingsStore.swift     # UserDefaults wrapper for all user preferences
@@ -101,10 +102,10 @@ Resources/
 
 ### Post-v1.0 Roadmap
 - [ ] Scheduled recording window
-- [ ] Lock exposure / white balance
-- [ ] Morning summary local notification
+- [x] Lock exposure / white balance
+- [x] Morning summary local notification
 - [x] Motion bounding box overlay (toggle)
-- [ ] Sensitivity slider with live preview
+- [x] Sensitivity slider with live preview
 
 ---
 
