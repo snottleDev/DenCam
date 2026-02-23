@@ -92,6 +92,21 @@ class ViewController: UIViewController {
     // until the device cools back to .serious or below.
     private var thermalShutdown = false
 
+    // MARK: - Session Log
+
+    // Notification manager — schedules the 7 AM morning summary.
+    private let notificationManager = NotificationManager.shared
+
+    // The wall-clock time when the current recording started.
+    // Set when the state machine transitions idle → recording.
+    // Cleared (set to nil) when the recording stops.
+    private var currentRecordingStart: Date?
+
+    // All motion events captured this session, in chronological order.
+    // Built up throughout the night; passed to NotificationManager after
+    // each recording completes so the morning summary stays current.
+    private var sessionEvents: [MotionEvent] = []
+
     // Label shown when the device is overheating
     private let thermalWarningLabel: UILabel = {
         let label = UILabel()
@@ -281,6 +296,9 @@ class ViewController: UIViewController {
                 self.thermalMonitor.start()
                 // Camera is ready — the lock button can now do something useful.
                 self.lockButton.isEnabled = true
+                // Request notification permission now that the camera is confirmed working.
+                // iOS shows the system prompt exactly once; after that this is a no-op.
+                self.notificationManager.requestPermission()
             } else {
                 // Permission denied or session setup failed — show the guidance label
                 self.permissionLabel.isHidden = false
@@ -417,9 +435,22 @@ class ViewController: UIViewController {
             if recordingState != .idle {
                 cancelTailTimer()
                 recordingState = .idle
-                recordingManager.stopRecording { url in
-                    if let url = url {
-                        print("[ViewController] Thermal shutdown — saved: \(url.lastPathComponent)")
+
+                // Capture the event window before the recording queue takes over.
+                let eventStart = currentRecordingStart
+                let eventEnd = Date()
+                currentRecordingStart = nil
+
+                recordingManager.stopRecording { [weak self] url in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        if let url = url {
+                            print("[ViewController] Thermal shutdown — saved: \(url.lastPathComponent)")
+                        }
+                        // Still log the interrupted clip — partial activity is worth knowing about.
+                        if let start = eventStart {
+                            self.logMotionEvent(start: start, end: eventEnd)
+                        }
                     }
                 }
                 print("[ViewController] Thermal critical — stopped recording")
@@ -465,6 +496,7 @@ class ViewController: UIViewController {
                 return
             }
             recordingState = .recording
+            currentRecordingStart = Date()   // stamp the start for the session log
             recordingManager.startRecording()
             print("[ViewController] Motion detected — started recording")
 
@@ -516,12 +548,40 @@ class ViewController: UIViewController {
         recordingState = .idle
         tailTimer = nil
 
-        recordingManager.stopRecording { url in
-            if let url = url {
-                print("[ViewController] Recording saved to: \(url.lastPathComponent)")
-            } else {
-                print("[ViewController] Recording stop returned no file")
+        // Capture the event window before dispatching to the recording queue.
+        // We use "now" as the end time — this is when the tail fired and we
+        // decided to stop, which is the meaningful end of the activity window.
+        let eventStart = currentRecordingStart
+        let eventEnd = Date()
+        currentRecordingStart = nil
+
+        recordingManager.stopRecording { [weak self] url in
+            // stopRecording's completion runs on recordingQueue.
+            // Hop to main before touching session state or UI.
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let url = url {
+                    print("[ViewController] Recording saved to: \(url.lastPathComponent)")
+                } else {
+                    print("[ViewController] Recording stop returned no file")
+                }
+                // Log this event and refresh the morning summary notification.
+                if let start = eventStart {
+                    self.logMotionEvent(start: start, end: eventEnd)
+                }
             }
         }
+    }
+
+    /// Appends a completed motion event to the session log and reschedules the
+    /// morning summary notification with the updated list.
+    /// Must be called on the main thread.
+    private func logMotionEvent(start: Date, end: Date) {
+        sessionEvents.append(MotionEvent(start: start, end: end))
+        notificationManager.scheduleMorningSummary(
+            events: sessionEvents,
+            totalBytes: storageManager.bytesRecorded
+        )
+        print("[ViewController] Session log updated — \(sessionEvents.count) event(s) total")
     }
 }
