@@ -148,4 +148,34 @@ All post-v1.0 features complete except: scheduled recording window. App is other
 
 ---
 
+## Session 4 — Arm/Disarm Button + Device Debugging
+**Date:** 2026-02-24
+
+### Arm/Disarm Button (`UI/ViewController.swift`)
+
+Added a start/stop control so the app doesn't record while the user is positioning the camera.
+
+- New `isArmed` boolean — when false, motion detection pipeline still runs (preview, bounding boxes, ROI border all live) but nothing records and the screen never auto-dims
+- `armButton` — large `record.circle` icon centered at the bottom of the screen; becomes red `stop.circle.fill` when armed
+- `armStatusLabel` — small text beneath the button: "Tap to start monitoring" / "Monitoring — tap to stop"
+- `arm()` — enables recording and starts the brightness dim timer
+- `disarm()` — stops the dim timer; if a recording is in progress, stops it cleanly and saves the clip before disarming
+- `handleMotionDetection` now guards on `isArmed` before doing anything
+- `brightnessManager.start()` moved out of the camera configure block and into `arm()` — dim timer only runs while armed
+- Button disabled until camera is configured; greyed appearance reflects this
+
+### Device / Build Issues Resolved
+
+- **XcodeGen workflow**: any time a new Swift file is created outside Xcode, `xcodegen generate` must be re-run before building. Established as a session habit.
+- **Debugger pause at `lldb_image_notifier`**: normal LLDB startup behaviour; press Continue (Cmd+Ctrl+Y) if the app appears to hang on launch with the debugger attached.
+- **"Device support for Merijn's iPhone doesn't exist"**: device running iOS 26.3 connected via network rather than USB; non-blocking — app installs and runs. `Fig` errors in console are Apple-internal camera framework noise, not app errors.
+
+### Files Modified
+- `DenCam/UI/ViewController.swift` — arm/disarm properties, button layout, arm/disarm/updateArmButton methods, guard in handleMotionDetection, configure block update
+
+### Status
+All v1.0 features plus all listed post-v1.0 features complete. Arm/disarm UX added. Only remaining roadmap item: scheduled recording window.
+
+---
+
 <!-- Add new milestones above this line -->

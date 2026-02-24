@@ -74,6 +74,30 @@ class ViewController: UIViewController {
     // Tracks whether exposure and white balance are currently locked.
     private var isCameraLocked = false
 
+    // MARK: - Arm / Disarm
+
+    // Whether the app is armed — i.e. ready to detect motion and trigger recordings.
+    // When disarmed the camera preview still runs (so the user can frame the shot)
+    // but motion detection never starts a recording and the screen never auto-dims.
+    private var isArmed = false
+
+    // Large button centred at the bottom of the screen. Tapping toggles armed state.
+    // Disabled until the camera is configured so there is something to arm.
+    private let armButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.isEnabled = false   // enabled once camera is ready
+        return button
+    }()
+
+    // Small label beneath the arm button that describes the current state.
+    private let armStatusLabel: UILabel = {
+        let label = UILabel()
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = UIColor.white.withAlphaComponent(0.8)
+        label.textAlignment = .center
+        return label
+    }()
+
     // Held while the sensitivity preview sheet is open so the motion callback
     // can update the preview's indicator in real time.
     private weak var sensitivityPreviewVC: SensitivityPreviewViewController?
@@ -280,6 +304,24 @@ class ViewController: UIViewController {
         ])
         lockButton.addTarget(self, action: #selector(lockTapped), for: .touchUpInside)
 
+        // Add the arm/disarm button and its status label centred at the bottom.
+        // They sit in a vertical stack so the label tracks the button automatically.
+        let armStack = UIStackView(arrangedSubviews: [armButton, armStatusLabel])
+        armStack.axis = .vertical
+        armStack.spacing = 6
+        armStack.alignment = .center
+        armStack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(armStack)
+        NSLayoutConstraint.activate([
+            armStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            armStack.bottomAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24)
+        ])
+        armButton.addTarget(self, action: #selector(armTapped), for: .touchUpInside)
+
+        // Set initial appearance while disabled (camera not ready yet)
+        updateArmButton()
+
         // Add the toast label centered horizontally, near the top of the screen.
         // Uses a fixed height and horizontal padding; text is set just before showing.
         lockToastLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -298,10 +340,11 @@ class ViewController: UIViewController {
         cameraManager.configure { [weak self] success in
             guard let self = self else { return }
             if success {
-                self.brightnessManager.start(in: self.view)
                 self.thermalMonitor.start()
-                // Camera is ready — the lock button can now do something useful.
+                // Camera is ready — enable both corner buttons.
                 self.lockButton.isEnabled = true
+                self.armButton.isEnabled = true
+                self.updateArmButton()
                 // Request notification permission now that the camera is confirmed working.
                 // iOS shows the system prompt exactly once; after that this is a no-op.
                 self.notificationManager.requestPermission()
@@ -386,6 +429,72 @@ class ViewController: UIViewController {
             sheet.prefersScrollingExpandsWhenScrolledToEdge = false
         }
         present(nav, animated: true)
+    }
+
+    // MARK: - Arm / Disarm
+
+    @objc private func armTapped() {
+        if isArmed { disarm() } else { arm() }
+    }
+
+    /// Arms the app: enables motion-triggered recording and starts the dim timer.
+    private func arm() {
+        isArmed = true
+        updateArmButton()
+        // Now that the user has walked away, start the inactivity dim timer.
+        brightnessManager.start(in: view)
+        print("[ViewController] Armed — monitoring started")
+    }
+
+    /// Disarms the app: disables recording, stops the dim timer, and saves any
+    /// clip that was in progress so nothing is lost.
+    private func disarm() {
+        isArmed = false
+        updateArmButton()
+        brightnessManager.stop()
+        print("[ViewController] Disarmed — monitoring stopped")
+
+        // If a recording is active (or in its tail), stop it cleanly.
+        guard recordingState != .idle else { return }
+
+        cancelTailTimer()
+        let eventStart = currentRecordingStart
+        let eventEnd = Date()
+        currentRecordingStart = nil
+        recordingState = .idle
+
+        recordingManager.stopRecording { [weak self] url in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let url = url {
+                    print("[ViewController] Disarmed mid-clip — saved: \(url.lastPathComponent)")
+                }
+                // Log the partial clip so the morning summary includes it.
+                if let start = eventStart {
+                    self.logMotionEvent(start: start, end: eventEnd)
+                }
+            }
+        }
+    }
+
+    /// Updates the arm button icon, tint, and status label to match `isArmed`.
+    private func updateArmButton() {
+        let symbolConfig = UIImage.SymbolConfiguration(pointSize: 56, weight: .regular)
+        if isArmed {
+            // Red stop icon — makes it obvious the app is actively recording
+            armButton.setImage(
+                UIImage(systemName: "stop.circle.fill", withConfiguration: symbolConfig),
+                for: .normal)
+            armButton.tintColor = .systemRed
+            armStatusLabel.text = "Monitoring — tap to stop"
+        } else {
+            // White record icon — greyed out if camera isn't ready yet
+            armButton.setImage(
+                UIImage(systemName: "record.circle", withConfiguration: symbolConfig),
+                for: .normal)
+            armButton.tintColor = armButton.isEnabled ? .white : UIColor.white.withAlphaComponent(0.3)
+            armStatusLabel.text = armButton.isEnabled ? "Tap to start monitoring" : "Camera starting…"
+        }
     }
 
     // MARK: - Exposure & White Balance Lock
@@ -533,6 +642,11 @@ class ViewController: UIViewController {
     //   all other combinations         → no-op
 
     private func handleMotionDetection(_ detected: Bool) {
+        // Ignore motion events entirely while the app is not armed.
+        // The camera preview and bounding box overlay still run — the user can
+        // watch the feed and tune the ROI — but nothing will be recorded.
+        guard isArmed else { return }
+
         switch (recordingState, detected) {
 
         case (.idle, true):

@@ -106,6 +106,7 @@ Resources/
 - [x] Morning summary local notification
 - [x] Motion bounding box overlay (toggle)
 - [x] Sensitivity slider with live preview
+- [x] Arm/disarm button (prevent recording while positioning camera)
 
 ---
 
